@@ -30,4 +30,3 @@ jobs:
         with:
           name: my-final-apk
           path: build/apk/*.apk
-
