@@ -5,10 +5,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install
+      - name: Deps
         run: pip install flet
       - name: Java
         uses: actions/setup-java@v4
@@ -16,9 +17,9 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
       - name: Build
-        run: flet build apk --project "MyAccount" --org "com.sun"
+        run: flet build apk --project "MyAccount" --org "com.sun" --no-input
       - name: Export
         uses: actions/upload-artifact@v4
         with:
-          name: my-apk
+          name: my-final-apk
           path: build/apk/*.apk
