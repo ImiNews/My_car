@@ -4,17 +4,19 @@ import calendar
 import os
 from datetime import datetime
 
-# 设置日历逻辑
+# 设置日历逻辑：周日为一周开始
 calendar.setfirstweekday(calendar.SUNDAY)
 
 def init_db():
     db_path = "accounting.db"
+    # 自动识别环境：安卓使用私有目录，电脑使用当前目录
     if os.environ.get("FLET_PLATFORM") == "android" or "ANDROID_DATA" in os.environ:
         data_dir = os.environ.get("FLET_APP_STORAGE_DATA", os.getcwd())
         db_path = os.path.join(data_dir, "accounting.db")
 
     conn = sqlite3.connect(db_path, check_same_thread=False)
     c = conn.cursor()
+    # 核心表结构：含件数、油费、备注
     c.execute('''
         CREATE TABLE IF NOT EXISTS records (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,6 +33,7 @@ def init_db():
             UNIQUE(record_date, car_number)
         )
     ''')
+    # 数据库字段自动补齐逻辑
     columns = [row[1] for row in c.execute("PRAGMA table_info(records)").fetchall()]
     for col, dtype in [("quantity", "INTEGER DEFAULT 0"), ("fuel", "REAL DEFAULT 0"), ("note", "TEXT")]:
         if col not in columns:
@@ -43,6 +46,12 @@ def main(page: ft.Page):
     page.theme_mode = ft.ThemeMode.LIGHT
     page.theme = ft.Theme(color_scheme_seed=ft.Colors.DEEP_ORANGE)
     page.padding = 0
+    
+    # 强制页面语言环境为中文
+    page.locale_configuration = ft.LocaleConfiguration(
+        current_locale=ft.Locale("zh", "CN"),
+        supported_locales=[ft.Locale("zh", "CN")],
+    )
 
     conn = init_db()
     state = {
@@ -51,32 +60,31 @@ def main(page: ft.Page):
         "cur_month": datetime.now().month
     }
 
-    def get_year_stats():
+    # --- 统计逻辑 ---
+    def get_stats():
         c = conn.cursor()
-        this_year = state['selected_date'][:4]
-        year_start = f"{this_year}-01-01"
-        c.execute("SELECT SUM(income) FROM records WHERE record_date >= ? AND record_date <= ?", (year_start, state['selected_date']))
-        y_income = c.fetchone()[0] or 0.0
-        c.execute("SELECT COUNT(*) FROM records WHERE record_date >= ? AND record_date <= ?", (year_start, state['selected_date']))
-        y_cars = c.fetchone()[0] or 0
-        return y_income, y_cars
+        y_start = f"{state['selected_date'][:4]}-01-01"
+        c.execute("SELECT SUM(income), COUNT(*) FROM records WHERE record_date >= ? AND record_date <= ?", (y_start, state['selected_date']))
+        y_res = c.fetchone()
+        m_prefix = f"{state['cur_year']}-{state['cur_month']:02d}"
+        c.execute("SELECT SUM(income) FROM records WHERE record_date LIKE ?", (f"{m_prefix}%",))
+        m_income = c.fetchone()[0] or 0.0
+        return y_res[0] or 0.0, y_res[1] or 0, m_income
 
-    year_income_text = ft.Text("年度总盈利: ¥ 0.00", color=ft.Colors.WHITE, weight="bold", size=16)
+    # 【修复1】移除了默认白色，将在 load_flow 中动态计算颜色
+    year_income_text = ft.Text("年度总盈利: ¥ 0.00", weight="bold", size=16)
     
-    # 【改动1：定义月度总利润文本组件】
-    month_total_text = ft.Text("¥ 0.00", size=26, weight="bold", color="deeporange")
+    # 【修复2】移除了默认 deeporange 色，将在 build_calendar 中动态计算颜色
+    month_total_text = ft.Text("¥ 0.00", size=26, weight="bold")
 
+    # --- 流水卡片工厂 ---
     def create_car_card(car_num, price="", cost="", labor="", misc="", quantity="", fuel="", income=0.0, note="", total_count=0):
-        # 输入框使用 expand=1 确保每行三个框等宽对齐
         qty_f = ft.TextField(label="件数", value=str(quantity) if quantity else "", expand=1, keyboard_type="number")
         cost_f = ft.TextField(label="进价", value=str(cost) if cost else "", expand=1, keyboard_type="number")
         price_f = ft.TextField(label="卖价", value=str(price) if price else "", expand=1, keyboard_type="number")
-        
         labor_f = ft.TextField(label="工费", value=str(labor) if labor else "", expand=1, keyboard_type="number")
         fuel_f = ft.TextField(label="油费", value=str(fuel) if fuel else "", expand=1, keyboard_type="number")
         misc_f = ft.TextField(label="杂费", value=str(misc) if misc else "", expand=1, keyboard_type="number")
-        
-        # 备注和利润
         note_f = ft.TextField(label="备注", value=str(note) if note else "", multiline=True, expand=1)
         income_t = ft.Text(f"{income:.2f}", size=20, weight="bold", color="red" if income >= 0 else "green")
 
@@ -106,24 +114,9 @@ def main(page: ft.Page):
                         ft.Text(f"第 {car_num} 车 (总{total_count}车)", weight="bold"),
                         ft.IconButton(ft.Icons.DELETE_OUTLINE, icon_color="red400", on_click=delete_click)
                     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    
-                    # 第一行：件数、进价、卖价
                     ft.Row([qty_f, cost_f, price_f], spacing=8),
-                    
-                    # 第二行：工费、油费、杂费
                     ft.Row([labor_f, fuel_f, misc_f], spacing=8),
-                    
-                    # 第三行：备注(左半) 和 利润(右半)
-                    ft.Row([
-                        note_f,
-                        ft.Container(
-                            expand=1,
-                            content=ft.Column([
-                                ft.Text("本车利润", size=11, color="grey700"),
-                                income_t
-                            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
-                        )
-                    ], spacing=10),
+                    ft.Row([note_f, ft.Container(expand=1, content=ft.Column([ft.Text("本车利润", size=11, color="grey700"), income_t], horizontal_alignment=ft.CrossAxisAlignment.CENTER))], spacing=10),
                 ], spacing=12)
             ),
             data={"price": price_f, "cost": cost_f, "labor": labor_f, "misc": misc_f, "qty": qty_f, "fuel": fuel_f, "note": note_f, "income": income_t, "num": car_num}
@@ -134,15 +127,18 @@ def main(page: ft.Page):
 
     def load_flow():
         car_list_column.controls.clear()
-        y_income, y_cars = get_year_stats()
-        year_income_text.value = f"年度总盈利 ({state['selected_date'][:4]}年): ¥ {y_income:.2f}"
+        y_inc, y_cars, _ = get_stats()
+        year_income_text.value = f"年度总盈利 ({state['selected_date'][:4]}年): ¥ {y_inc:.2f}"
+        
+        # 【修复3】年度总利润颜色判断：盈利=红，亏损=绿
+        year_income_text.color = "red" if y_inc >= 0 else "green"
+        
         c = conn.cursor()
         c.execute("SELECT car_number, price, cost, labor, misc, quantity, fuel, income, note FROM records WHERE record_date = ? ORDER BY car_number ASC", (state["selected_date"],))
         rows = c.fetchall()
         base_count = y_cars - len(rows)
         for i, r in enumerate(rows):
-            card = create_car_card(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], base_count + i + 1)
-            car_list_column.controls.append(card)
+            car_list_column.controls.append(create_car_card(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], base_count + i + 1))
         page.update()
 
     cal_grid = ft.GridView(runs_count=7, spacing=5, run_spacing=5, expand=True)
@@ -152,15 +148,10 @@ def main(page: ft.Page):
         cal_grid.controls.clear()
         for w in ["日", "一", "二", "三", "四", "五", "六"]:
             cal_grid.controls.append(ft.Row([ft.Text(w, size=12, weight="bold")], alignment=ft.MainAxisAlignment.CENTER))
-        
         c = conn.cursor()
         prefix = f"{state['cur_year']}-{state['cur_month']:02d}"
         c.execute("SELECT record_date, SUM(income) FROM records WHERE record_date LIKE ? GROUP BY record_date", (f"{prefix}%",))
         data = {row[0]: row[1] for row in c.fetchall()}
-        
-        # 【改动2：获取本月总利润数据】
-        month_total_text.value = f"¥ {sum(data.values()):.2f}"
-
         month_days = calendar.monthcalendar(state['cur_year'], state['cur_month'])
         for week in month_days:
             for day in week:
@@ -178,17 +169,29 @@ def main(page: ft.Page):
                             bgcolor="white", border_radius=8, on_click=lambda _, ds=d_str: jump_to_date(ds)
                         )
                     )
+        _, _, m_total = get_stats()
         month_txt.value = f"{state['cur_year']}年{state['cur_month']}月"
+        month_total_text.value = f"¥ {m_total:.2f}"
+        
+        # 【修复4】月度总利润颜色判断：盈利=红，亏损=绿
+        month_total_text.color = "red" if m_total >= 0 else "green"
+        
         page.update()
 
     def jump_to_date(ds):
         state["selected_date"] = ds; date_label.value = ds
         page.navigation_bar.selected_index = 0; load_flow(); update_view(0)
 
-    date_picker = ft.DatePicker(on_change=lambda e: (state.update({"selected_date": e.control.value.strftime("%Y-%m-%d")}), load_flow()) if e.control.value else None)
+    date_picker = ft.DatePicker(
+        locale="zh",
+        on_change=lambda e: (state.update({"selected_date": e.control.value.strftime("%Y-%m-%d")}), load_flow()) if e.control.value else None
+    )
     page.overlay.append(date_picker)
 
+    # --- 界面主体 ---
     flow_view = ft.Column([
+        # 【修复5】将顶部空白栏高度改为 44 像素，与下面的标题栏对齐
+        ft.Container(height=44, bgcolor=ft.Colors.TRANSPARENT), 
         ft.Container(content=ft.Row([year_income_text], alignment=ft.MainAxisAlignment.CENTER), bgcolor=ft.Colors.DEEP_ORANGE_ACCENT, padding=12),
         ft.Container(padding=10, bgcolor="white", content=ft.Row([
             ft.Row([ft.Icon(ft.Icons.CALENDAR_MONTH, size=20), date_label]),
@@ -204,7 +207,6 @@ def main(page: ft.Page):
     def add_new_car():
         _, y_cars = get_year_stats()
         cur_cards = len([c for c in car_list_column.controls if isinstance(c, ft.Card)])
-        # 【改动3：修复这里漏掉的塞入卡片代码】
         car_list_column.controls.append(create_car_card(cur_cards + 1, total_count=y_cars + 1))
         page.update()
 
@@ -220,16 +222,17 @@ def main(page: ft.Page):
                            float(d["labor"].value or 0), float(d["misc"].value or 0), int(d["qty"].value or 0),
                            float(d["fuel"].value or 0), float(d["income"].value), d["note"].value))
         conn.commit()
-        page.snack_bar = ft.SnackBar(ft.Text("数据已存入数据库")); page.snack_bar.open = True; load_flow()
+        page.snack_bar = ft.SnackBar(ft.Text("✅ 数据已保存成功")); page.snack_bar.open = True; load_flow()
 
     board_view = ft.Column([
+        # 【修复6】看板页顶部空白也统一改为 44 像素
+        ft.Container(height=44, bgcolor=ft.Colors.TRANSPARENT), 
         ft.Container(padding=15, content=ft.Row([
             ft.IconButton(ft.Icons.ARROW_BACK_IOS, on_click=lambda _: change_month(-1)),
             month_txt,
             ft.IconButton(ft.Icons.ARROW_FORWARD_IOS, on_click=lambda _: change_month(1)),
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)),
         ft.Container(content=cal_grid, expand=True, padding=10),
-        # 【改动4：在底部增加月度总利润UI】
         ft.Container(
             padding=20, bgcolor="white", border_radius=ft.border_radius.only(top_left=25, top_right=25),
             content=ft.Column([
@@ -251,11 +254,11 @@ def main(page: ft.Page):
         page.update()
 
     page.navigation_bar = ft.NavigationBar(
-        destinations=[ft.NavigationBarDestination(icon=ft.Icons.LIST, label="流水记录"), ft.NavigationBarDestination(icon=ft.Icons.GRID_VIEW, label="数据看板")],
+        destinations=[ft.NavigationBarDestination(icon=ft.Icons.LIST, label="流水"), ft.NavigationBarDestination(icon=ft.Icons.GRID_VIEW, label="看板")],
         on_change=lambda e: update_view(e.control.selected_index)
     )
 
-    page.add(flow_view, board_view)
+    page.add(ft.Stack([flow_view, board_view]))
     load_flow()
 
 if __name__ == "__main__":
