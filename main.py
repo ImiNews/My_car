@@ -42,7 +42,7 @@ def init_db():
     return conn
 
 def main(page: ft.Page):
-    page.title = "记账本 Pro"
+    page.title = "记账本"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.theme = ft.Theme(color_scheme_seed=ft.Colors.DEEP_ORANGE)
     page.padding = 0
