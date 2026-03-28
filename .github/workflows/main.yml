@@ -16,4 +16,10 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
       - name: Build
-        run: flet build apk --project "MyAccount" --org "com.sun"
+        # 使用 yes | 强制自动同意所有弹窗协议
+        run: yes | flet build apk --project "MyAccount" --org "com.sun"
+      - name: Export
+        uses: actions/upload-artifact@v4
+        with:
+          name: my-final-apk
+          path: build/apk/*.apk
