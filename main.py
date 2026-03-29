@@ -33,7 +33,7 @@ def init_db():
             UNIQUE(record_date, car_number)
         )
     ''')
-    # 数据库字段自动补齐逻辑
+    # 数据库字段自动补齐逻辑1
     columns = [row[1] for row in c.execute("PRAGMA table_info(records)").fetchall()]
     for col, dtype in [("quantity", "INTEGER DEFAULT 0"), ("fuel", "REAL DEFAULT 0"), ("note", "TEXT")]:
         if col not in columns:
